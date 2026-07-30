@@ -2,6 +2,8 @@
 
 **Multi-Agent AI Research Paper Briefing Engine**
 
+🌐 **Live Demo:** https://scholarswarm.vercel.app
+
 Upload a PDF or PPTX and get a fully verified research brief in minutes — with claims cross-checked against the source, figures described by vision AI, and an interactive context map connecting every element of the paper.
 
 ---
@@ -142,7 +144,11 @@ VITE_API_URL=https://your-api.onrender.com   # Production
 
 ### After deploy
 
-Update `FRONTEND_URL` in Render to your Vercel URL, then redeploy backend.
+Update `FRONTEND_URL` in Render to `https://scholarswarm.vercel.app`, then redeploy backend.
+
+**Live URLs:**
+- Frontend: https://scholarswarm.vercel.app
+- Backend: https://scholarswarm.onrender.com
 
 ---
 

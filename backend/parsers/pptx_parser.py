@@ -1,95 +1,46 @@
-"""
-PPTX Parser — Extracts text from PowerPoint presentations with slide-level coordinate mapping.
-Uses python-pptx to iterate slides and shapes.
-"""
-
-import os
-import logging
+import io
 from pptx import Presentation
-from backend.models.schemas import TextChunk, ParsedDocument
-
-logger = logging.getLogger("rag_pipeline.parsers.pptx")
 
 
-def parse_pptx(file_path: str, file_id: str) -> ParsedDocument:
-    """
-    Parse a PPTX file and return structured text chunks with coordinates.
+def extract_text_from_pptx(file_bytes: bytes) -> dict:
+    prs = Presentation(io.BytesIO(file_bytes))
+    pages = {}
+    full_text = ""
 
-    Args:
-        file_path: Absolute path to the PPTX file.
-        file_id: Unique identifier for this file upload.
-
-    Returns:
-        ParsedDocument with text chunks mapped to [Slide X, Shape Y].
-    """
-    filename = os.path.basename(file_path)
-    logger.info(f"Parsing PPTX: {filename}")
-
-    prs = Presentation(file_path)
-    total_slides = len(prs.slides)
-    chunks: list[TextChunk] = []
-
-    for slide_idx, slide in enumerate(prs.slides):
-        slide_num = slide_idx + 1
-        shape_counter = 0
-
+    for i, slide in enumerate(prs.slides):
+        slide_text = ""
         for shape in slide.shapes:
-            if not shape.has_text_frame:
-                continue
+            if shape.has_text_frame:
+                for para in shape.text_frame.paragraphs:
+                    text = para.text.strip()
+                    if text:
+                        slide_text += text + "\n"
+        if slide.has_notes_slide:
+            notes = slide.notes_slide.notes_text_frame.text.strip()
+            if notes and notes != "Click to edit Master text styles":
+                slide_text += f"\n[Speaker Notes: {notes}]\n"
+        pages[i + 1] = slide_text
+        full_text += slide_text + "\n"
 
-            # Collect all text from the shape's text frame
-            shape_text_parts = []
-            for paragraph in shape.text_frame.paragraphs:
-                para_text = paragraph.text.strip()
-                if para_text:
-                    shape_text_parts.append(para_text)
+    title = "Unknown Title"
+    authors = "Unknown Authors"
+    if prs.slides:
+        texts = []
+        for shape in prs.slides[0].shapes:
+            if shape.has_text_frame:
+                t = shape.text_frame.text.strip()
+                if t:
+                    texts.append(t)
+        if texts:
+            title = texts[0]
+        if len(texts) > 1:
+            authors = texts[1]
 
-            if not shape_text_parts:
-                continue
-
-            shape_counter += 1
-            combined_text = "\n".join(shape_text_parts)
-
-            chunks.append(
-                TextChunk(
-                    text=combined_text,
-                    page_number=slide_num,  # Slide = page
-                    paragraph_number=shape_counter,  # Shape = paragraph
-                    source_file=filename,
-                    chunk_id=f"{file_id}_slide{slide_num}_shape{shape_counter}",
-                )
-            )
-
-        # Also extract text from tables on the slide
-        for shape in slide.shapes:
-            if not shape.has_table:
-                continue
-            table = shape.table
-            table_text_parts = []
-            for row in table.rows:
-                row_cells = [cell.text.strip() for cell in row.cells if cell.text.strip()]
-                if row_cells:
-                    table_text_parts.append(" | ".join(row_cells))
-
-            if table_text_parts:
-                shape_counter += 1
-                chunks.append(
-                    TextChunk(
-                        text="\n".join(table_text_parts),
-                        page_number=slide_num,
-                        paragraph_number=shape_counter,
-                        source_file=filename,
-                        chunk_id=f"{file_id}_slide{slide_num}_table{shape_counter}",
-                    )
-                )
-
-    logger.info(f"  Extracted {len(chunks)} chunks from {total_slides} slides")
-
-    return ParsedDocument(
-        file_id=file_id,
-        filename=filename,
-        file_type="pptx",
-        total_pages=total_slides,
-        total_chunks=len(chunks),
-        chunks=chunks,
-    )
+    return {
+        "pages": pages,
+        "full_text": full_text.strip(),
+        "title": title,
+        "authors": authors,
+        "total_pages": len(prs.slides),
+        "file_type": "pptx",
+    }

@@ -1,55 +1,56 @@
 # ScholarSwarm
 
-An AI-powered research paper analyzer that extracts claims, fact-checks them against the source text, and generates study aids (briefs, flashcards, concept maps) with exact page-level citations.
+Multi-Agent AI Research Paper Briefing Engine. Upload a PDF or PPTX and get a verified brief with claims, limitations, flashcards, tables, figures, and more.
 
-## Features
+## Stack
 
-- **No Hallucinations:** Every claim presented to the user is verified against the original text by a dedicated fact-checker agent.
-- **Page-Level Traceability:** Click on any claim, flashcard, or concept map node to jump directly to the exact page and sentence in the embedded PDF viewer.
-- **Smart Ingestion:** Handles multi-column academic layouts, detects tables/figures, and falls back to OCR for scanned PDFs.
-- **Premium UI:** A dynamic, responsive dark-mode interface built with glassmorphism and micro-animations.
+- **Frontend**: React + Vite + Tailwind CSS → Vercel
+- **Backend**: FastAPI + Python → Render
+- **LLM**: Groq (llama3-8b-8192) — 3 agents: Extractor, Critic, Simplifier
+- **Vision**: Gemini 1.5 Flash for figure analysis
+- **Parsing**: PyMuPDF + pdfplumber + python-pptx
 
-## Prerequisites
+## Setup
 
-- Python 3.10+ (Tested on 3.13)
-- Google Gemini API Key (Free tier works perfectly)
-- [Optional] Tesseract OCR for scanned PDF support
+### Backend
 
-## Installation
+```bash
+cd backend
+cp .env.example .env
+# Fill in GROQ_API_KEY and GEMINI_API_KEY
+pip install -r requirements.txt
+uvicorn main:app --reload
+```
 
-1. Clone the repository
-2. Navigate to the `backend` directory:
-   ```bash
-   cd backend
-   ```
-3. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-4. Set up your environment variables:
-   - Copy `.env.example` to `.env`
-   - Add your `GEMINI_API_KEY` (Get one from [Google AI Studio](https://aistudio.google.com/))
+### Frontend
 
-## Running the Application
+```bash
+cd frontend
+npm install
+cp .env.example .env.local
+# Set VITE_API_URL=http://localhost:8000
+npm run dev
+```
 
-1. Start the FastAPI backend from the `backend` directory:
-   ```bash
-   python main.py
-   ```
-2. Open your browser and navigate to `http://localhost:8000`
+## Deploy
 
-## Architecture
+### Render (Backend)
+- Root: `backend`
+- Build: `pip install -r requirements.txt`
+- Start: `uvicorn main:app --host 0.0.0.0 --port $PORT`
+- Env: `GROQ_API_KEY`, `GEMINI_API_KEY`, `FRONTEND_URL`
 
-- **Frontend:** Vanilla HTML/CSS/JS served directly by FastAPI (no Node.js build step required). Features D3.js for concept maps and PDF.js for the document viewer.
-- **Backend:** FastAPI orchestrating a 7-stage pipeline:
-  1. PDF Ingestion (PyMuPDF / Tesseract)
-  2. Semantic Chunking
-  3. Embeddings (sentence-transformers + ChromaDB)
-  4. Extractor Agent (Gemini 2.5 Flash)
-  5. Fact-Checker Agent (Gemini 2.5 Flash)
-  6. Citation Formatting
-  7. Output Generation (Brief, Flashcards, Concept Map)
+### Vercel (Frontend)
+- Root: `frontend`
+- Framework: Vite
+- Env: `VITE_API_URL=https://your-app.onrender.com`
 
-## Privacy & Data Handling
+## API
 
-ScholarSwarm respects your data. Uploaded PDFs and generated vectors are stored locally and are automatically cleaned up when your session expires (30 minutes of inactivity) or when you explicitly start a new analysis. No data is stored long-term.
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/upload` | Upload PDF/PPTX, returns full analysis |
+| GET | `/brief/{id}` | Retrieve cached brief by ID |
+| POST | `/ask` | Ask a question about the paper |
+| GET | `/similar?title=` | Find similar papers via Semantic Scholar |
+| GET | `/health` | Health check |

@@ -1,96 +1,123 @@
-"""
-PDF Parser — Extracts text from PDF files with page-level coordinate mapping.
-Uses PyPDF2 to extract text page by page and splits into paragraphs.
-"""
-
-import os
-import logging
-from PyPDF2 import PdfReader
-from backend.models.schemas import TextChunk, ParsedDocument
-
-logger = logging.getLogger("rag_pipeline.parsers.pdf")
+import fitz
+import re
 
 
-def parse_pdf(file_path: str, file_id: str) -> ParsedDocument:
-    """
-    Parse a PDF file and return structured text chunks with coordinates.
+def extract_text_from_pdf(file_bytes: bytes) -> dict:
+    doc = fitz.open(stream=file_bytes, filetype="pdf")
+    pages = {}
+    full_text = ""
+    total_pages = len(doc)
 
-    Args:
-        file_path: Absolute path to the PDF file.
-        file_id: Unique identifier for this file upload.
+    for i in range(total_pages):
+        page = doc[i]
+        blocks = page.get_text("blocks", sort=True)
+        page_text = ""
+        for block in blocks:
+            if block[6] == 0:
+                text = block[4].strip()
+                if text:
+                    page_text += text + "\n"
+        pages[i + 1] = page_text
+        full_text += page_text + "\n"
 
-    Returns:
-        ParsedDocument with text chunks mapped to [Page X, Paragraph Y].
-    """
-    filename = os.path.basename(file_path)
-    logger.info(f"Parsing PDF: {filename}")
+    page1_lines = [l.strip() for l in pages.get(1, "").splitlines() if l.strip()]
+    title = _extract_title(page1_lines)
+    authors = _extract_authors(page1_lines, title)
+    doc.close()
 
-    reader = PdfReader(file_path)
-    total_pages = len(reader.pages)
-    chunks: list[TextChunk] = []
-    chunk_counter = 0
+    return {
+        "pages": pages,
+        "full_text": full_text.strip(),
+        "title": title,
+        "authors": authors,
+        "total_pages": total_pages,
+        "file_type": "pdf",
+    }
 
-    for page_idx, page in enumerate(reader.pages):
-        page_num = page_idx + 1
-        raw_text = page.extract_text() or ""
 
-        if not raw_text.strip():
-            logger.debug(f"  Page {page_num}: empty, skipping")
+def _extract_title(lines: list) -> str:
+    if not lines:
+        return "Unknown Title"
+
+    candidates = []
+    for line in lines[:12]:
+        stripped = line.strip()
+        if len(stripped) < 5:
             continue
+        # Skip lines that look like author lists (names with commas/&)
+        if _looks_like_authors(stripped):
+            continue
+        # Skip institution lines
+        if _looks_like_institution(stripped):
+            continue
+        # Skip abstract header
+        if stripped.upper() in ("ABSTRACT", "INTRODUCTION", "SUMMARY"):
+            continue
+        # Skip URLs, DOIs, emails
+        if any(x in stripped.lower() for x in ["http", "doi:", "@", "arxiv", "©", "copyright"]):
+            continue
+        candidates.append(stripped)
 
-        # Split into paragraphs by double newlines or significant whitespace
-        paragraphs = _split_into_paragraphs(raw_text)
+    if not candidates:
+        return lines[0] if lines else "Unknown Title"
 
-        for para_idx, para_text in enumerate(paragraphs):
-            if not para_text.strip():
-                continue
-            chunk_counter += 1
-            chunks.append(
-                TextChunk(
-                    text=para_text.strip(),
-                    page_number=page_num,
-                    paragraph_number=para_idx + 1,
-                    source_file=filename,
-                    chunk_id=f"{file_id}_p{page_num}_para{para_idx + 1}",
-                )
-            )
+    # Prefer ALL CAPS lines (common for paper titles)
+    all_caps = [c for c in candidates[:6] if c.isupper() and len(c) > 5]
+    if all_caps:
+        return all_caps[0]
 
-    logger.info(
-        f"  Extracted {len(chunks)} chunks from {total_pages} pages"
-    )
+    # Prefer Title Case lines in first 5 candidates
+    title_case = [c for c in candidates[:5] if _is_title_case(c) and len(c) > 10]
+    if title_case:
+        return title_case[0]
 
-    return ParsedDocument(
-        file_id=file_id,
-        filename=filename,
-        file_type="pdf",
-        total_pages=total_pages,
-        total_chunks=len(chunks),
-        chunks=chunks,
-    )
+    # Fall back to first meaningful candidate
+    return candidates[0]
 
 
-def _split_into_paragraphs(text: str) -> list[str]:
-    """
-    Split raw text into meaningful paragraphs.
-    Handles double newlines, and falls back to single newlines
-    if no double newlines are found.
-    """
-    # Try splitting on double newlines first
-    paragraphs = text.split("\n\n")
+def _extract_authors(lines: list, title: str) -> str:
+    title_lower = title.lower()
+    for line in lines[:12]:
+        stripped = line.strip()
+        if stripped.lower() == title_lower:
+            continue
+        if len(stripped) < 5:
+            continue
+        if _looks_like_authors(stripped):
+            return stripped
+        # Author lines often have multiple capitalized words with commas
+        if "," in stripped and len(stripped) < 250:
+            words = stripped.split()
+            cap_words = sum(1 for w in words if w and w[0].isupper())
+            if cap_words >= 2 and len(words) >= 2:
+                if not _looks_like_institution(stripped):
+                    return stripped
+    return "Unknown Authors"
 
-    if len(paragraphs) <= 1:
-        # Fallback: split on single newlines but merge short lines
-        lines = text.split("\n")
-        paragraphs = []
-        current = []
-        for line in lines:
-            stripped = line.strip()
-            if not stripped and current:
-                paragraphs.append(" ".join(current))
-                current = []
-            elif stripped:
-                current.append(stripped)
-        if current:
-            paragraphs.append(" ".join(current))
 
-    return [p for p in paragraphs if p.strip()]
+def _looks_like_authors(text: str) -> bool:
+    # Author patterns: "Name, Name & Name" or "Name1, Name2, Name3"
+    if re.search(r'[A-Z][a-z]+\s+[A-Z][a-z]+,\s+[A-Z]', text):
+        return True
+    if re.search(r'[A-Z][a-z]+\s+[A-Z][a-z]+\s+&\s+[A-Z]', text):
+        return True
+    if re.search(r'[A-Z][a-z]+\s+[A-Z][a-z]+,\s+[A-Z][a-z]+\s+[A-Z][a-z]+', text):
+        return True
+    return False
+
+
+def _looks_like_institution(text: str) -> bool:
+    keywords = ["university", "institute", "laboratory", "lab ", "department",
+                 "college", "school", "research", "corporation", "inc.", "ltd",
+                 "carnegie", "stanford", "mit ", "google", "microsoft", "amazon",
+                 "meta ", "apple ", "openai", "deepmind"]
+    lower = text.lower()
+    return any(kw in lower for kw in keywords)
+
+
+def _is_title_case(text: str) -> bool:
+    words = text.split()
+    if len(words) < 2:
+        return False
+    cap_words = sum(1 for w in words if w and w[0].isupper())
+    return cap_words / len(words) >= 0.6

@@ -96,8 +96,8 @@ Open http://localhost:5173
 ### Backend `.env`
 
 ```
-GROQ_API_KEY=gsk_...          # Required — https://console.groq.com
-GEMINI_API_KEY=AIza...         # Required — https://aistudio.google.com
+GROQ_API_KEY=gsk_...          # Required - https://console.groq.com
+GEMINI_API_KEY=AIza...         # Required - https://aistudio.google.com
 FRONTEND_URL=https://your-app.vercel.app   # For production CORS
 ```
 
@@ -115,11 +115,11 @@ VITE_API_URL=https://your-api.onrender.com   # Production
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/upload` | Upload PDF/PPTX — runs full 3-agent pipeline |
+| `POST` | `/upload` | Upload PDF/PPTX - runs full 3-agent pipeline |
 | `GET` | `/brief/{id}` | Retrieve cached brief by share ID |
 | `GET` | `/pdf/{id}` | Serve uploaded PDF for in-browser viewer |
 | `POST` | `/ask` | BM25 RAG Q&A against the paper |
-| `POST` | `/tts` | Gemini TTS — returns audio/wav |
+| `POST` | `/tts` | Gemini TTS - returns audio/wav |
 | `GET` | `/similar?title=` | Find related papers via Semantic Scholar |
 | `GET` | `/health` | Health check (used for Render warm-up ping) |
 

@@ -1,62 +1,126 @@
 """
-PaperVerify — Configuration and constants.
+Configuration module for the RAG Validation Pipeline.
+Loads environment variables and provides typed access to all settings.
 """
+
 import os
-from pathlib import Path
+from dataclasses import dataclass, field
 from dotenv import load_dotenv
 
-# ── Paths ──────────────────────────────────────────────────────────────
-BASE_DIR = Path(__file__).resolve().parent
+# Load .env from project root
+load_dotenv(os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env"))
 
-# Load environment variables from the backend folder or the workspace root.
-for env_path in [
-    BASE_DIR / ".env",
-    BASE_DIR.parent / ".env",
-    BASE_DIR / ".env.local",
-    BASE_DIR.parent / ".env.local",
-]:
-    if env_path.exists():
-        load_dotenv(env_path, override=False)
-        break
 
-# Fallback: load from the current working directory if present.
-load_dotenv(override=False)
-TEMP_DIR = BASE_DIR / "temp"
-CACHE_DIR = BASE_DIR / "cache"
-LOGS_DIR = BASE_DIR / "logs"
-FRONTEND_DIR = BASE_DIR.parent / "frontend"
+@dataclass
+class LLMConfig:
+    """LLM provider configuration."""
+    provider: str = ""
+    groq_api_key: str = ""
+    gemini_api_key: str = ""
+    agent1_model: str = ""
+    agent2_model: str = ""
 
-# Create directories
-for d in [TEMP_DIR, CACHE_DIR, LOGS_DIR]:
-    d.mkdir(parents=True, exist_ok=True)
+    @property
+    def active_api_key(self) -> str:
+        if self.provider == "gemini":
+            return self.gemini_api_key
+        return self.groq_api_key
 
-# ── API Keys ───────────────────────────────────────────────────────────
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 
-# ── Server ─────────────────────────────────────────────────────────────
-HOST = os.getenv("HOST", "0.0.0.0")
-PORT = int(os.getenv("PORT", 8000))
+@dataclass
+class SearchConfig:
+    """Search provider configuration."""
+    provider: str = ""
+    tavily_api_key: str = ""
+    serpapi_key: str = ""
 
-# ── PDF Constraints ───────────────────────────────────────────────────
-MAX_FILE_SIZE_MB = 50
-MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
-MAX_PAGES = 100
+    @property
+    def active_api_key(self) -> str:
+        if self.provider == "serpapi":
+            return self.serpapi_key
+        return self.tavily_api_key
 
-# ── Chunking ──────────────────────────────────────────────────────────
-CHUNK_MIN_WORDS = 300
-CHUNK_MAX_WORDS = 500
-SHORT_PAPER_THRESHOLD = 5  # pages
 
-# ── Agent Settings ────────────────────────────────────────────────────
-AGENT_TIMEOUT_SECONDS = 30
-AGENT_MAX_RETRIES = 1
-REJECTION_RATE_THRESHOLD = 0.30  # 30% unsupported → low quality warning
-CHUNK_BATCH_SIZE = 6  # chunks per extractor call
+@dataclass
+class PipelineSettings:
+    """Pipeline behavior configuration."""
+    strict_rag_mode: bool = True
+    temporal_cutoff_year: int = 2021
+    output_format: str = "PDF"
 
-# ── Session ───────────────────────────────────────────────────────────
-SESSION_IDLE_TIMEOUT_MINUTES = 30
-SESSION_CLEANUP_INTERVAL_MINUTES = 5
 
-# ── Citation ──────────────────────────────────────────────────────────
-MAX_QUOTE_WORDS = 15
+@dataclass
+class UITheme:
+    """Frontend theme configuration."""
+    theme_name: str = "Neo-Brutalism"
+    color_base: str = "#FFFFFF"
+    color_borders: str = "#000000"
+    color_agent1: str = "#00FF00"
+    color_agent2: str = "#0000FF"
+
+
+@dataclass
+class AppConfig:
+    """Root application configuration."""
+    llm: LLMConfig = field(default_factory=LLMConfig)
+    search: SearchConfig = field(default_factory=SearchConfig)
+    pipeline: PipelineSettings = field(default_factory=PipelineSettings)
+    ui: UITheme = field(default_factory=UITheme)
+    upload_dir: str = ""
+    reports_dir: str = ""
+
+    def validate(self) -> list[str]:
+        """Validate configuration. Returns list of error messages."""
+        errors = []
+        if self.llm.provider == "groq" and not self.llm.groq_api_key:
+            errors.append("GROQ_API_KEY is required when LLM_PROVIDER=groq")
+        if self.llm.provider == "gemini" and not self.llm.gemini_api_key:
+            errors.append("GEMINI_API_KEY is required when LLM_PROVIDER=gemini")
+        if self.search.provider == "tavily" and not self.search.tavily_api_key:
+            errors.append("TAVILY_API_KEY is required when SEARCH_PROVIDER=tavily")
+        if self.search.provider == "serpapi" and not self.search.serpapi_key:
+            errors.append("SERPAPI_KEY is required when SEARCH_PROVIDER=serpapi")
+        return errors
+
+
+def _clean_str(val: str) -> str:
+    """Clean surrounding quotes and whitespace from environment strings."""
+    if not val:
+        return ""
+    return val.strip().strip('"').strip("'")
+
+
+def load_config() -> AppConfig:
+    """Load configuration from environment variables."""
+    project_root = os.path.dirname(os.path.dirname(__file__))
+    env_path = os.path.join(project_root, ".env")
+    load_dotenv(env_path, override=True)
+
+    upload_dir = os.path.join(project_root, "uploads")
+    reports_dir = os.path.join(project_root, "reports")
+    os.makedirs(upload_dir, exist_ok=True)
+    os.makedirs(reports_dir, exist_ok=True)
+
+    return AppConfig(
+        llm=LLMConfig(
+            provider=_clean_str(os.getenv("LLM_PROVIDER", "groq")),
+            groq_api_key=_clean_str(os.getenv("GROQ_API_KEY", "")),
+            gemini_api_key=_clean_str(os.getenv("GEMINI_API_KEY", "")),
+            agent1_model=_clean_str(os.getenv("AGENT1_MODEL", "llama-3.1-8b-instant")),
+            agent2_model=_clean_str(os.getenv("AGENT2_MODEL", "llama-3.1-8b-instant")),
+        ),
+        search=SearchConfig(
+            provider=_clean_str(os.getenv("SEARCH_PROVIDER", "tavily")),
+            tavily_api_key=_clean_str(os.getenv("TAVILY_API_KEY", "")),
+            serpapi_key=_clean_str(os.getenv("SERPAPI_KEY", "")),
+        ),
+        pipeline=PipelineSettings(
+            strict_rag_mode=_clean_str(os.getenv("STRICT_RAG_MODE", "true")).lower() == "true",
+            temporal_cutoff_year=int(_clean_str(os.getenv("TEMPORAL_CUTOFF_YEAR", "2021"))),
+            output_format=_clean_str(os.getenv("OUTPUT_FORMAT", "PDF")),
+        ),
+        ui=UITheme(),
+        upload_dir=upload_dir,
+        reports_dir=reports_dir,
+    )
+

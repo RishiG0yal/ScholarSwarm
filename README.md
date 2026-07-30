@@ -2,7 +2,7 @@
 
 **Multi-Agent AI Research Paper Briefing Engine**
 
-🌐 **Live Demo:** https://scholarswarm.vercel.app
+**Live Demo:** https://scholarswarm.vercel.app
 
 Upload a PDF or PPTX and get a fully verified research brief in minutes — with claims cross-checked against the source, figures described by vision AI, and an interactive context map connecting every element of the paper.
 

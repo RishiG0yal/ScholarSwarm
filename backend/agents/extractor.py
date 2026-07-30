@@ -1,13 +1,14 @@
 import os
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor
 from groq import Groq
 from dotenv import load_dotenv
 
 load_dotenv()
 
-CHUNK_SIZE = 6000
-MAX_CHUNKS = 8
+CHUNK_SIZE = 4000
+MAX_CHUNKS = 12
 
 GEMINI_TEXT_MODELS = [
     "gemini-flash-latest",
@@ -16,54 +17,52 @@ GEMINI_TEXT_MODELS = [
     "gemini-2.0-flash-lite",
 ]
 
-CHUNK_PROMPT = """You are ScholarSwarm Extractor Agent, an expert AI research analyst.
-Analyze this section of a research paper and return ONLY valid JSON, no markdown, no explanation.
+CHUNK_PROMPT = """You are an expert academic research analyst. Analyze this section of a research paper and extract structured information.
+Return ONLY valid JSON. No markdown fences, no explanation text.
 
 {
-  "summary": "2-3 sentence summary of what this section covers — be specific, name methods and results",
+  "summary": "2-3 sentences describing what this section covers. Name specific methods, models, datasets, or metrics mentioned.",
   "claims": [
-    {"text": "Specific verifiable claim — MUST include numbers, model names, or dataset names if present in text", "page": 1}
+    {"text": "A specific, verifiable claim from this section. Must include quantitative results (numbers, percentages, model names, dataset names) when present.", "page": 1}
   ],
-  "limitations": ["A limitation explicitly stated in this section — quote or closely paraphrase"],
+  "limitations": ["A limitation explicitly acknowledged in this section. If none, return []."],
   "flashcards": [
-    {"front": "A specific question whose answer is directly in this section", "back": "Precise answer from the text"}
+    {"front": "A precise question answered directly by this section.", "back": "The exact answer from the text — never vague or generic."}
   ],
   "key_terms": [
-    {"term": "Technical term as used in this paper", "definition": "Definition exactly as the paper uses it"}
+    {"term": "A technical term introduced or defined in this section.", "definition": "The definition as used in this specific paper."}
   ]
 }
 
-Rules:
-- NEVER invent claims. Every claim must be directly traceable to the source text.
-- Claims with numbers (e.g. '94.2% accuracy on MATH benchmark') are far better than vague claims
-- Page numbers: estimate from section position (section 1 = pages 1-2, section 3 = pages 5-6, etc.)
-- If a section has no limitations, return []
-- Flashcard backs must be specific answers, not vague summaries
-- Extract 2-4 claims, 0-3 limitations, 2-3 flashcards, 2-4 key terms"""
+Strict rules:
+- Every claim must be traceable to the source text. Never fabricate.
+- Quantitative claims (e.g. 'achieves 94.2% on MATH-500') score higher than qualitative ones.
+- Page numbers: infer from context — introduction ≈ pages 1-2, methods ≈ 3-5, results ≈ 6-9, conclusion ≈ 10+.
+- Extract 2-5 claims, 0-3 limitations, 2-4 flashcards, 2-5 key terms per section."""
 
-MERGE_PROMPT = """You are ScholarSwarm Merge Agent. You have partial analyses of multiple sections of one research paper.
-Merge them into one final comprehensive, high-quality brief.
-Return ONLY valid JSON, no markdown:
+MERGE_PROMPT = """You are an expert research synthesis agent. You have received partial analyses of multiple sections of one academic paper.
+Merge them into a single, high-quality, comprehensive brief.
+Return ONLY valid JSON. No markdown fences, no explanation text.
 
 {
-  "summary": "3-4 sentence summary of the FULL paper. Cover: (1) what problem is solved, (2) what method is proposed, (3) what the key quantitative result is, (4) why this matters",
+  "summary": "3-4 sentences covering the complete paper: (1) the core research problem, (2) the proposed method or approach, (3) the key quantitative results with specific numbers, (4) the broader significance.",
   "claims": [
-    {"text": "The 5 most specific verifiable claims — strongly prefer ones with numbers, percentages, model names", "page": 1}
+    {"text": "The claim text — prefer quantitative, specific, and directly verifiable claims.", "page": 1}
   ],
-  "limitations": ["Up to 5 unique specific limitations explicitly from the paper"],
+  "limitations": ["A specific limitation explicitly stated in the paper."],
   "flashcards": [
-    {"front": "Specific question covering a different aspect of the paper", "back": "Precise specific answer"}
+    {"front": "A precise question about a key aspect of the paper.", "back": "The specific, accurate answer from the paper."}
   ],
   "key_terms": [
-    {"term": "Term", "definition": "Definition as used in this specific paper"}
+    {"term": "Technical term.", "definition": "Definition as used in this paper — not a generic dictionary definition."}
   ]
 }
 
-Rules:
-- Summary MUST be specific — name the method, name the benchmark, quote the key metric
-- Remove duplicate claims — always keep the more specific or quantitative version
-- Flashcard backs must be specific, never generic
-- Return exactly: 5 claims, 3-5 limitations, 6 flashcards, 8-10 key terms"""
+Strict rules:
+- Summary must name the method and benchmark and quote the key metric. 'Achieves state-of-the-art' alone is not acceptable.
+- For claims: remove all duplicates. Always keep the more specific, quantitative version.
+- For flashcards: cover different aspects (problem, method, results, implications, datasets).
+- Return exactly: 5 claims, 3-5 limitations, 6 flashcards, 8-10 key terms."""
 
 
 def extract_brief(full_context: str, title: str, authors: str) -> dict:
@@ -74,9 +73,7 @@ def extract_brief(full_context: str, title: str, authors: str) -> dict:
         try:
             return _extract_with_groq(full_context, title, authors, groq_key)
         except Exception as e:
-            if gemini_key:
-                pass  # fall through to Gemini
-            else:
+            if not gemini_key:
                 raise Exception(f"Extraction failed: {str(e)}")
 
     if gemini_key:
@@ -98,7 +95,7 @@ def _extract_with_groq(full_context: str, title: str, authors: str, api_key: str
         user_prompt = (
             f"Paper Title: {title}\nAuthors: {authors}\n"
             f"Section {i + 1} of {len(chunks)}:\n\n{chunk}\n\n"
-            "Analyze this section and return the JSON structure."
+            "Analyze this section and return the JSON."
         )
         for attempt in range(3):
             try:
@@ -108,27 +105,23 @@ def _extract_with_groq(full_context: str, title: str, authors: str, api_key: str
                         {"role": "system", "content": CHUNK_PROMPT},
                         {"role": "user", "content": user_prompt},
                     ],
-                    temperature=0.2,
-                    max_tokens=1500,
+                    temperature=0.15,
+                    max_tokens=1200,
                 )
-                raw = _clean_json(response.choices[0].message.content)
-                return (i, json.loads(raw))
+                return (i, json.loads(_clean_json(response.choices[0].message.content)))
             except json.JSONDecodeError:
                 return (i, None)
             except Exception as e:
-                err = str(e)
-                if "rate_limit" in err.lower() or "429" in err or "TPM" in err:
+                if "rate_limit" in str(e).lower() or "429" in str(e) or "TPM" in str(e):
                     import time
                     time.sleep(5 * (attempt + 1))
                     continue
                 return (i, None)
         return (i, None)
 
-    from concurrent.futures import ThreadPoolExecutor
     with ThreadPoolExecutor(max_workers=min(len(chunks), 4)) as executor:
-        results = list(executor.map(process_chunk, enumerate(chunks)))
+        results = sorted(list(executor.map(process_chunk, enumerate(chunks))), key=lambda x: x[0])
 
-    results.sort(key=lambda x: x[0])
     partial_briefs = [r for _, r in results if r is not None]
 
     if not partial_briefs:
@@ -144,8 +137,8 @@ def _merge_with_groq(client: Groq, partial_briefs: list, title: str, authors: st
     combined = json.dumps(partial_briefs, indent=2)[:10000]
     user_prompt = (
         f"Paper Title: {title}\nAuthors: {authors}\n\n"
-        f"Partial analyses from {len(partial_briefs)} sections:\n{combined}\n\n"
-        "Merge into one final comprehensive brief. Return the JSON structure."
+        f"Partial section analyses:\n{combined}\n\n"
+        "Merge into one final comprehensive brief. Return the JSON."
     )
     try:
         response = client.chat.completions.create(
@@ -157,8 +150,7 @@ def _merge_with_groq(client: Groq, partial_briefs: list, title: str, authors: st
             temperature=0.1,
             max_tokens=2000,
         )
-        raw = _clean_json(response.choices[0].message.content)
-        return json.loads(raw)
+        return json.loads(_clean_json(response.choices[0].message.content))
     except Exception:
         return _merge_locally(partial_briefs)
 
@@ -174,12 +166,11 @@ def _extract_with_gemini(full_context: str, title: str, authors: str, api_key: s
             f"{CHUNK_PROMPT}\n\n"
             f"Paper Title: {title}\nAuthors: {authors}\n"
             f"Section {i + 1} of {min(len(chunks), MAX_CHUNKS)}:\n\n{chunk}\n\n"
-            "Return the JSON structure."
+            "Return the JSON."
         )
         try:
             raw = _clean_json(_gemini_generate(client, prompt))
-            partial = json.loads(raw)
-            partial_briefs.append(partial)
+            partial_briefs.append(json.loads(raw))
         except Exception:
             continue
 
@@ -190,13 +181,8 @@ def _extract_with_gemini(full_context: str, title: str, authors: str, api_key: s
         return partial_briefs[0]
 
     combined = json.dumps(partial_briefs, indent=2)[:10000]
-    merge_prompt = (
-        f"{MERGE_PROMPT}\n\n"
-        f"Paper Title: {title}\nAuthors: {authors}\n\n"
-        f"Partial analyses:\n{combined}\n\nReturn the JSON structure."
-    )
     try:
-        raw = _clean_json(_gemini_generate(client, merge_prompt))
+        raw = _clean_json(_gemini_generate(client, f"{MERGE_PROMPT}\n\nPaper Title: {title}\nAuthors: {authors}\n\nPartial analyses:\n{combined}\n\nReturn the JSON."))
         return json.loads(raw)
     except Exception:
         return _merge_locally(partial_briefs)
@@ -205,14 +191,9 @@ def _extract_with_gemini(full_context: str, title: str, authors: str, api_key: s
 def _gemini_generate(client, prompt: str) -> str:
     for model_id in GEMINI_TEXT_MODELS:
         try:
-            response = client.models.generate_content(
-                model=model_id,
-                contents=[prompt],
-            )
-            return response.text
+            return client.models.generate_content(model=model_id, contents=[prompt]).text
         except Exception as e:
-            err = str(e)
-            if "429" in err or "quota" in err.lower() or "RESOURCE_EXHAUSTED" in err:
+            if "429" in str(e) or "quota" in str(e).lower() or "RESOURCE_EXHAUSTED" in str(e):
                 continue
             raise
     raise Exception("All Gemini text models quota exhausted.")

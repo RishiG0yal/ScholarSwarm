@@ -147,25 +147,18 @@ async def upload_paper(request: Request, file: UploadFile = File(...)):
     citations = extract_citations(full_text)
     merged_context = _build_merged_context(full_text, tables, figures, equations)
 
-    import time as _time
-    t0 = _time.time()
     try:
         brief = extract_brief(merged_context, title, authors)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    print(f"[TIMING] Extractor: {_time.time()-t0:.1f}s")
 
-    t1 = _time.time()
     verified_claims = verify_claims(brief.get("claims", []), page_texts)
-    print(f"[TIMING] Critic: {_time.time()-t1:.1f}s")
 
     for claim in verified_claims:
         sim = tfidf_similarity(claim["text"], full_text)
         claim["confidence"] = blend_confidence(claim.get("confidence", 0.5), sim)
 
-    t2 = _time.time()
     simplified = simplify_summary(brief.get("summary", ""), title)
-    print(f"[TIMING] Simplifier: {_time.time()-t2:.1f}s")
     readability = flesch_kincaid(full_text)
 
     result = {
@@ -190,7 +183,7 @@ async def upload_paper(request: Request, file: UploadFile = File(...)):
         "citations_count": len(citations),
     }
 
-    result_id = store_result({**result, "_page_texts": page_texts})
+    result_id = store_result({**result, "_page_texts": page_texts, "_pdf_bytes": file_bytes if filename.endswith(".pdf") else None})
     result["result_id"] = result_id
     return result
 
@@ -242,6 +235,20 @@ async def similar_papers(request: Request, title: str = ""):
         return {"papers": []}
     papers = await find_similar_papers(title[:200])
     return {"papers": papers}
+
+
+@app.get("/pdf/{result_id}")
+async def get_pdf(result_id: str):
+    if not RESULT_ID_PATTERN.match(result_id):
+        raise HTTPException(status_code=400, detail="Invalid ID.")
+    data = get_result(result_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="Session expired.")
+    pdf_bytes = data.get("_pdf_bytes")
+    if not pdf_bytes:
+        raise HTTPException(status_code=404, detail="PDF not available.")
+    from fastapi.responses import Response
+    return Response(content=pdf_bytes, media_type="application/pdf")
 
 
 @app.get("/health")

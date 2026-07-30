@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-export default function ClaimCard({ claim }) {
+export default function ClaimCard({ claim, onPageClick }) {
   const [expanded, setExpanded] = useState(false);
   const conf = Math.round((claim.confidence || 0) * 100);
 
@@ -20,9 +20,14 @@ export default function ClaimCard({ claim }) {
         <span className={`text-xs font-semibold ${status.color} flex items-center gap-1.5 flex-shrink-0`}>
           {status.icon} {status.label}
         </span>
-        <span className="text-xs text-gray-600 bg-gray-800/80 px-2 py-0.5 rounded-full flex-shrink-0">
-          Page {claim.page}
-        </span>
+        <button
+          onClick={() => onPageClick && onPageClick(claim.page, claim.source_quote)}
+          className={`text-xs bg-gray-800/80 px-2 py-0.5 rounded-full flex-shrink-0 transition-colors
+            ${onPageClick ? "hover:bg-violet-600 hover:text-white cursor-pointer text-gray-400" : "text-gray-600 cursor-default"}`}
+          title={onPageClick ? "Open PDF at this page" : ""}
+        >
+          Page {claim.page}{onPageClick ? " ↗" : ""}
+        </button>
       </div>
 
       {/* Claim text */}

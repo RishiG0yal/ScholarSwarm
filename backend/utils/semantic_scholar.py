@@ -1,8 +1,9 @@
 import httpx
+import asyncio
 
 BASE_URL = "https://api.semanticscholar.org/graph/v1"
 FIELDS = "title,authors,year,citationCount,url"
-TIMEOUT = 8.0
+TIMEOUT = 10.0
 
 
 async def find_similar_papers(title: str, limit: int = 5) -> list:
@@ -10,11 +11,29 @@ async def find_similar_papers(title: str, limit: int = 5) -> list:
         return []
 
     safe_title = title[:200].strip()
-    params = {"query": safe_title, "fields": FIELDS, "limit": limit + 2}
+
+    # Try with a short delay to avoid rate limiting
+    await asyncio.sleep(1)
+
+    params = {"query": safe_title, "fields": FIELDS, "limit": limit + 3}
 
     try:
         async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-            resp = await client.get(f"{BASE_URL}/paper/search", params=params)
+            resp = await client.get(
+                f"{BASE_URL}/paper/search",
+                params=params,
+                headers={"User-Agent": "ScholarSwarm/1.0"},
+            )
+
+            if resp.status_code == 429:
+                # Rate limited — wait and retry once
+                await asyncio.sleep(5)
+                resp = await client.get(
+                    f"{BASE_URL}/paper/search",
+                    params=params,
+                    headers={"User-Agent": "ScholarSwarm/1.0"},
+                )
+
             if resp.status_code != 200:
                 return []
 

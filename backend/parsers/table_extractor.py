@@ -29,9 +29,14 @@ def _process_table(table, page_num: int, t_idx: int) -> dict | None:
 
     headers = [_clean_cell(c) for c in table[0]]
 
-    # Need at least 2 non-empty columns
-    non_empty_headers = [h for h in headers if h]
-    if len(non_empty_headers) < MIN_USEFUL_COLS and len(headers) < MIN_USEFUL_COLS:
+    # Need at least 2 non-empty headers
+    non_empty_headers = [h for h in headers if h.strip()]
+    if len(non_empty_headers) < 2:
+        return None
+
+    # Skip if headers look garbled (very short random strings)
+    real_headers = [h for h in non_empty_headers if len(h) > 2 and not h.isdigit()]
+    if len(real_headers) < 2:
         return None
 
     # Skip if any header looks like prose or code

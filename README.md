@@ -1,4 +1,4 @@
-# PaperVerify
+# ScholarSwarm
 
 An AI-powered research paper analyzer that extracts claims, fact-checks them against the source text, and generates study aids (briefs, flashcards, concept maps) with exact page-level citations.
 
@@ -52,4 +52,4 @@ An AI-powered research paper analyzer that extracts claims, fact-checks them aga
 
 ## Privacy & Data Handling
 
-PaperVerify respects your data. Uploaded PDFs and generated vectors are stored locally and are automatically cleaned up when your session expires (30 minutes of inactivity) or when you explicitly start a new analysis. No data is stored long-term.
+ScholarSwarm respects your data. Uploaded PDFs and generated vectors are stored locally and are automatically cleaned up when your session expires (30 minutes of inactivity) or when you explicitly start a new analysis. No data is stored long-term.
